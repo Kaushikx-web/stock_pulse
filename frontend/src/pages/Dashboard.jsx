@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { getDashboard, getPOs } from '../api/client'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   TrendingUp, RefreshCw, BarChart2, DollarSign,
-  Activity, Layers, Coins, ShoppingCart, AlertTriangle, Package
+  Activity, Layers, Coins, ShoppingCart, AlertTriangle, Package, X
 } from 'lucide-react'
 import {
   ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid,
@@ -34,8 +34,11 @@ export default function Dashboard() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [pendingPOs, setPendingPOs] = useState([])
+  const [fromUpload, setFromUpload] = useState(false)
+  const location = useLocation()
+  const navigate = useNavigate()
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
       const [dashRes, poRes] = await Promise.all([
@@ -50,9 +53,19 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  useEffect(() => { load() }, [])
+  // Re-fetch every time we navigate TO the dashboard (location.key changes on each navigation)
+  useEffect(() => {
+    // Detect if we came from an upload (passed via router state)
+    if (location.state?.fromUpload) {
+      setFromUpload(true)
+      setTimeout(() => setFromUpload(false), 4000)
+      // Clear the state so back-navigation doesn't re-trigger the toast
+      window.history.replaceState({}, '')
+    }
+    load()
+  }, [location.key]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const trend = data?.daily_revenue_trend?.map(r => ({
     date: r.date.slice(5),
@@ -83,8 +96,65 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+
+      {/* ── Upload Refresh Toast ── */}
+      {fromUpload && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          background: 'rgba(197,241,53,0.08)',
+          border: '1px solid var(--holo-green-border)',
+          borderRadius: '12px', padding: '12px 18px',
+          animation: 'fadeInDown 0.4s ease',
+        }}>
+          <style>{`
+            @keyframes fadeInDown {
+              from { opacity: 0; transform: translateY(-10px); }
+              to   { opacity: 1; transform: translateY(0); }
+            }
+          `}</style>
+          <div style={{
+            width: '28px', height: '28px', borderRadius: '50%',
+            background: 'rgba(197,241,53,0.15)', border: '1px solid var(--holo-green-border)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            <RefreshCw size={14} color="var(--holo-green)" />
+          </div>
+          <div>
+            <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--holo-green)' }}>Dashboard refreshed with new data</p>
+            <p style={{ fontSize: '11px', color: 'var(--holo-text-muted)', marginTop: '1px' }}>Your uploaded data is now live in Supabase and reflected below</p>
+          </div>
+          <button
+            onClick={() => setFromUpload(false)}
+            style={{ marginLeft: 'auto', color: 'var(--holo-text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
       
       {/* ── Top Row: BTC Tracker, Overview Chart, Wallet Control ── */}
+      {/* Refresh bar */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-12px' }}>
+        <button
+          onClick={load}
+          disabled={loading}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid var(--holo-border)',
+            borderRadius: '8px', padding: '6px 14px',
+            color: loading ? 'var(--holo-text-muted)' : 'var(--holo-green)',
+            fontSize: '11px', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => { if (!loading) e.currentTarget.style.borderColor = 'var(--holo-green-border)' }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--holo-border)' }}
+        >
+          <RefreshCw size={12} style={{ animation: loading ? 'spin 0.8s linear infinite' : 'none' }} />
+          {loading ? 'Refreshing…' : 'Refresh Data'}
+        </button>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr 1.3fr', gap: '20px' }}>
         
         {/* Left Column: 30-Day Revenue Summary Card (BTC Tracker layout) */}
@@ -111,24 +181,28 @@ export default function Dashboard() {
             </div>
             
             <p style={{ fontSize: '32px', fontWeight: 800, color: 'var(--holo-text)', letterSpacing: '-0.02em', fontFamily: 'Space Grotesk, sans-serif' }}>
-              ${total30DayRevenue.toLocaleString()}
+              ${(data?.total_all_time_revenue ?? total30DayRevenue).toLocaleString()}
             </p>
             
-            <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-              <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--holo-border)', borderRadius: '10px', padding: '8px 12px', flex: 1 }}>
-                <p style={{ fontSize: '10px', color: 'var(--holo-text-muted)', textTransform: 'uppercase' }}>Active SKUs</p>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap: 'wrap' }}>
+              <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--holo-border)', borderRadius: '10px', padding: '8px 12px', flex: 1, minWidth: '70px' }}>
+                <p style={{ fontSize: '10px', color: 'var(--holo-text-muted)', textTransform: 'uppercase' }}>Products</p>
                 <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--holo-text)', marginTop: '2px' }}>{data?.total_products || 0}</p>
               </div>
-              <div style={{ background: 'var(--holo-green-dim)', border: '1px solid var(--holo-green-border)', borderRadius: '10px', padding: '8px 12px', flex: 1 }}>
-                <p style={{ fontSize: '10px', color: 'var(--holo-green)', textTransform: 'uppercase' }}>Trend</p>
-                <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--holo-green)', marginTop: '2px' }}>{getRevenueChange()}</p>
+              <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--holo-border)', borderRadius: '10px', padding: '8px 12px', flex: 1, minWidth: '70px' }}>
+                <p style={{ fontSize: '10px', color: 'var(--holo-text-muted)', textTransform: 'uppercase' }}>Inventory</p>
+                <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--holo-text)', marginTop: '2px' }}>{data?.inventory_count || 0}</p>
+              </div>
+              <div style={{ background: 'var(--holo-green-dim)', border: '1px solid var(--holo-green-border)', borderRadius: '10px', padding: '8px 12px', flex: 1, minWidth: '70px' }}>
+                <p style={{ fontSize: '10px', color: 'var(--holo-green)', textTransform: 'uppercase' }}>Suppliers</p>
+                <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--holo-green)', marginTop: '2px' }}>{data?.supplier_count || 0}</p>
               </div>
             </div>
           </div>
           
           <div style={{ borderTop: '1px solid var(--holo-border)', paddingTop: '12px', marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '11px', color: 'var(--holo-text-muted)' }}>Avg Daily Revenue</span>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--holo-text)' }}>${avgDailyRevenue.toLocaleString()}</span>
+            <span style={{ fontSize: '11px', color: 'var(--holo-text-muted)' }}>30-Day Revenue</span>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--holo-text)' }}>${total30DayRevenue.toLocaleString()}</span>
           </div>
         </div>
 

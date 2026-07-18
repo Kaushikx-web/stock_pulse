@@ -1,10 +1,70 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { useNavigate } from 'react-router-dom'
-import { uploadFile, confirmUpload } from '../api/client'
-import { Upload, CheckCircle, AlertCircle, FileSpreadsheet, ArrowRight, X } from 'lucide-react'
+import { uploadFile, confirmUpload, getUploadSummary } from '../api/client'
+import {
+  Upload, CheckCircle, AlertCircle, FileSpreadsheet,
+  ArrowRight, X, TrendingUp, Package, RefreshCw, Database,
+  BarChart2, Layers
+} from 'lucide-react'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell
+} from 'recharts'
 
-const STAGES = { idle: 0, preview: 1, done: 2 }
+const STAGES = { idle: 0, preview: 1, analysing: 2, done: 3 }
+
+const PALETTE = [
+  'var(--holo-green)', 'var(--holo-blue)', 'var(--holo-orange)',
+  'var(--holo-pink)', '#a78bfa', '#34d399', '#f59e0b'
+]
+
+function SummaryStatCard({ icon: Icon, label, value, color, delay = 0 }) {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setVisible(true), delay)
+    return () => clearTimeout(t)
+  }, [delay])
+  return (
+    <div style={{
+      flex: 1, minWidth: '130px',
+      background: 'rgba(255,255,255,0.03)',
+      border: `1px solid ${color}40`,
+      borderRadius: '14px',
+      padding: '18px',
+      display: 'flex', flexDirection: 'column', gap: '10px',
+      opacity: visible ? 1 : 0,
+      transform: visible ? 'translateY(0)' : 'translateY(16px)',
+      transition: 'opacity 0.45s ease, transform 0.45s ease',
+      boxShadow: `0 0 20px ${color}15`,
+    }}>
+      <div style={{
+        width: '36px', height: '36px', borderRadius: '10px',
+        background: `${color}18`, border: `1px solid ${color}40`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Icon size={18} color={color} />
+      </div>
+      <div>
+        <p style={{ fontSize: '10px', color: 'var(--holo-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '4px' }}>{label}</p>
+        <p style={{ fontSize: '28px', fontWeight: 800, color, fontFamily: 'Space Grotesk, sans-serif', lineHeight: 1 }}>{value}</p>
+      </div>
+    </div>
+  )
+}
+
+const CustomBarTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div style={{
+      background: 'rgba(15,18,26,0.95)', border: '1px solid var(--holo-border)',
+      borderRadius: '10px', padding: '8px 14px', fontSize: '12px',
+      backdropFilter: 'blur(12px)',
+    }}>
+      <p style={{ color: 'var(--holo-text)', fontWeight: 700 }}>{label}</p>
+      <p style={{ color: 'var(--holo-green)', marginTop: '3px' }}>{payload[0].value} items</p>
+    </div>
+  )
+}
 
 export default function UploadPage() {
   const navigate = useNavigate()
@@ -13,6 +73,7 @@ export default function UploadPage() {
   const [confirming, setConfirming] = useState(false)
   const [preview, setPreview] = useState(null)
   const [result, setResult] = useState(null)
+  const [summary, setSummary] = useState(null)
   const [error, setError] = useState(null)
   const [targetTable, setTargetTable] = useState('')
 
@@ -33,9 +94,7 @@ export default function UploadPage() {
     try {
       const fd = new FormData()
       fd.append('file', file)
-      if (targetTable) {
-        fd.append('target_table', targetTable)
-      }
+      if (targetTable) fd.append('target_table', targetTable)
       const res = await uploadFile(fd)
       setPreview(res.data)
       setStage(STAGES.preview)
@@ -47,16 +106,26 @@ export default function UploadPage() {
   }, [targetTable])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: undefined,
-    multiple: false,
+    onDrop, accept: undefined, multiple: false,
   })
 
   const handleConfirm = async () => {
     setConfirming(true)
     try {
       const res = await confirmUpload(preview.upload_id)
-      setResult(res.data)
+      const confirmData = res.data
+      setResult(confirmData)
+
+      // Fetch rich summary from backend
+      if (confirmData.summary_id) {
+        try {
+          const sumRes = await getUploadSummary(confirmData.summary_id)
+          setSummary(sumRes.data)
+        } catch (_) {
+          // summary fetch failed — still show done screen without breakdown
+          setSummary(null)
+        }
+      }
       setStage(STAGES.done)
     } catch (e) {
       setError(e.response?.data?.detail || 'Commit failed')
@@ -69,8 +138,18 @@ export default function UploadPage() {
     setStage(STAGES.idle)
     setPreview(null)
     setResult(null)
+    setSummary(null)
     setError(null)
   }
+
+  const goToDashboard = () => {
+    navigate('/', { state: { fromUpload: true } })
+  }
+
+  // Category chart data
+  const categoryData = summary?.categories
+    ? Object.entries(summary.categories).map(([name, count]) => ({ name, count }))
+    : []
 
   return (
     <div>
@@ -99,15 +178,11 @@ export default function UploadPage() {
       {stage === STAGES.idle && (
         <div className="mb-4 flex items-center gap-3">
           <label className="text-sm font-semibold" style={{ color: 'var(--holo-text)' }}>Target Table:</label>
-          <select 
+          <select
             value={targetTable}
             onChange={(e) => setTargetTable(e.target.value)}
             className="p-2 rounded-lg text-sm bg-transparent border focus:outline-none focus:ring-1 focus:ring-[var(--holo-green)] transition-all"
-            style={{ 
-              borderColor: 'var(--holo-border)', 
-              color: 'var(--holo-text)',
-              background: 'var(--holo-glass)'
-            }}
+            style={{ borderColor: 'var(--holo-border)', color: 'var(--holo-text)', background: 'var(--holo-glass)' }}
           >
             <option value="" style={{ background: '#0a0d14' }}>Auto-detect (AI)</option>
             <option value="products" style={{ background: '#0a0d14' }}>Products</option>
@@ -274,38 +349,153 @@ export default function UploadPage() {
               className="btn-primary flex items-center gap-2"
             >
               {confirming
-                ? <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#080a0f', borderTopColor: 'transparent' }} />
-                : <CheckCircle size={15} />
+                ? <><div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#080a0f', borderTopColor: 'transparent' }} /><span>Analysing data…</span></>
+                : <><CheckCircle size={15} /><span>Commit Ingest ({preview.preview_rows.length} rows)</span></>
               }
-              <span>Commit Ingest ({preview.preview_rows.length} rows)</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Stage 2: Done */}
+      {/* Stage 3: Done — Rich Analytics Summary */}
       {stage === STAGES.done && result && (
-        <div className="card text-center py-12"
-             style={{ borderColor: 'var(--holo-green-border)', background: 'var(--holo-green-dim)' }}>
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
-               style={{ background: 'rgba(197,241,53,0.15)', border: '1px solid var(--holo-green-border)' }}>
-            <CheckCircle size={32} style={{ color: 'var(--holo-green)' }} />
+        <div className="space-y-5">
+
+          {/* Success header */}
+          <div className="card text-center py-8"
+               style={{ borderColor: 'var(--holo-green-border)', background: 'linear-gradient(135deg, rgba(197,241,53,0.06) 0%, rgba(197,241,53,0.02) 100%)' }}>
+            <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
+                 style={{ background: 'rgba(197,241,53,0.15)', border: '1px solid var(--holo-green-border)', boxShadow: '0 0 30px rgba(197,241,53,0.2)' }}>
+              <CheckCircle size={32} style={{ color: 'var(--holo-green)' }} />
+            </div>
+            <h2 className="text-xl font-bold mb-1" style={{ color: 'var(--holo-text)', fontFamily: 'Space Grotesk, sans-serif' }}>
+              Ingest Successful
+            </h2>
+            <p style={{ color: 'var(--holo-text-muted)', fontSize: '13px' }}>
+              Data committed to{' '}
+              <span className="font-mono font-bold" style={{ color: 'var(--holo-green)' }}>
+                {result.target_table}
+              </span>
+              {' '}· Supabase updated
+            </p>
+            {result.errors?.length > 0 && (
+              <p className="text-sm mt-2" style={{ color: 'var(--holo-orange)' }}>
+                {result.errors.length} rows skipped due to validation errors
+              </p>
+            )}
           </div>
-          <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--holo-text)' }}>Ingest Successful</h2>
-          <p className="mb-1" style={{ color: 'var(--holo-text-sub)' }}>
-            <span className="font-bold text-2xl" style={{ color: 'var(--holo-green)' }}>{result.inserted}</span> rows inserted,
-            <span className="font-bold text-2xl ml-2" style={{ color: 'var(--holo-green)' }}>{result.updated || 0}</span> rows updated
-            in <span className="font-mono" style={{ color: 'var(--holo-green)' }}>{result.target_table}</span>
-          </p>
-          {result.errors?.length > 0 && (
-            <p className="text-sm mt-2" style={{ color: 'var(--holo-orange)' }}>{result.errors.length} rows skipped due to errors</p>
+
+          {/* Stat Cards */}
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+            <SummaryStatCard
+              icon={Database}
+              label="Rows Inserted"
+              value={result.inserted}
+              color="var(--holo-green)"
+              delay={0}
+            />
+            <SummaryStatCard
+              icon={RefreshCw}
+              label="Rows Updated"
+              value={result.updated || 0}
+              color="var(--holo-blue)"
+              delay={80}
+            />
+            <SummaryStatCard
+              icon={AlertCircle}
+              label="Rows Skipped"
+              value={result.errors?.length || 0}
+              color={result.errors?.length ? 'var(--holo-orange)' : 'var(--holo-text-muted)'}
+              delay={160}
+            />
+            {summary && (
+              <SummaryStatCard
+                icon={Layers}
+                label="Total Processed"
+                value={summary.total_processed || (result.inserted + (result.updated || 0) + (result.errors?.length || 0))}
+                color="var(--holo-pink)"
+                delay={240}
+              />
+            )}
+          </div>
+
+          {/* Category Breakdown chart */}
+          {categoryData.length > 0 && (
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                <BarChart2 size={16} style={{ color: 'var(--holo-green)' }} />
+                <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--holo-text)' }}>Category Breakdown</h3>
+                <span style={{ fontSize: '11px', color: 'var(--holo-text-muted)', marginLeft: 'auto' }}>
+                  {categoryData.length} categories detected
+                </span>
+              </div>
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart data={categoryData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="name" tick={{ fill: 'var(--holo-text-muted)', fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fill: 'var(--holo-text-muted)', fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <Tooltip content={<CustomBarTooltip />} />
+                  <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={48}>
+                    {categoryData.map((_, i) => (
+                      <Cell key={i} fill={PALETTE[i % PALETTE.length]} fillOpacity={0.85} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           )}
-          <div className="flex justify-center gap-4 mt-6">
+
+          {/* Revenue total (for sales_history) */}
+          {summary?.revenue_total > 0 && (
+            <div className="card" style={{ borderColor: 'var(--holo-green-border)', background: 'rgba(197,241,53,0.03)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <TrendingUp size={16} style={{ color: 'var(--holo-green)' }} />
+                <p style={{ fontSize: '13px', color: 'var(--holo-text-muted)' }}>Total Revenue in Uploaded Data</p>
+                <p style={{ marginLeft: 'auto', fontSize: '22px', fontWeight: 800, color: 'var(--holo-green)', fontFamily: 'Space Grotesk, sans-serif' }}>
+                  ${summary.revenue_total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Top items */}
+          {summary?.top_items?.length > 0 && (
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                <Package size={16} style={{ color: 'var(--holo-orange)' }} />
+                <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--holo-text)' }}>Top Items from Upload</h3>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {summary.top_items.map((item, i) => {
+                  const maxVal = summary.top_items[0]?.value || 1
+                  const pct = Math.max(4, Math.round((item.value / maxVal) * 100))
+                  const color = PALETTE[i % PALETTE.length]
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ width: '18px', fontSize: '11px', fontWeight: 700, color: 'var(--holo-text-muted)', flexShrink: 0 }}>#{i+1}</span>
+                      <span style={{ fontSize: '13px', color: 'var(--holo-text)', minWidth: '140px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>{item.name}</span>
+                      <div style={{ flex: 1, height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: '3px', transition: 'width 0.8s ease' }} />
+                      </div>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color, flexShrink: 0, minWidth: '60px', textAlign: 'right' }}>
+                        {typeof item.value === 'number' && item.label === 'revenue'
+                          ? `$${item.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                          : item.value.toLocaleString()}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex justify-center gap-4 pt-2">
             <button onClick={reset} className="btn-secondary">
               Upload Another Dataset
             </button>
-            <button onClick={() => navigate('/')} className="btn-primary">
-              View Dashboard
+            <button onClick={goToDashboard} className="btn-primary flex items-center gap-2">
+              <TrendingUp size={15} />
+              View Updated Dashboard
             </button>
           </div>
         </div>

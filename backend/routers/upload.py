@@ -12,6 +12,7 @@ from agents.header_mapper import map_headers
 router = APIRouter(prefix="/upload", tags=["upload"])
 
 _preview_cache: dict = {}   # in-memory; fine for demo MVP
+_summary_cache: dict = {}   # stores post-confirm analysis summary
 
 
 @router.post("/")
@@ -310,6 +311,34 @@ def confirm_upload(
                     db.table(target).update(row).eq("id", row_id).execute()
                     updated += 1
 
+            # ── Auto-populate related tables ──────────────────────────────────
+            # When products are uploaded, auto-create a default inventory record
+            # for each NEW product so the dashboard shows real data immediately.
+            if target == "products" and inserts:
+                try:
+                    # Fetch the newly inserted product IDs by name
+                    new_names = [r["name"] for r in inserts]
+                    new_prods = db.table("products").select("id, name").eq("user_id", uid).in_("name", new_names).execute().data
+                    # Find which products don't already have an inventory record
+                    existing_inv = db.table("inventory").select("product_id").eq("user_id", uid).execute().data
+                    existing_pid_set = {e["product_id"] for e in existing_inv}
+                    inv_inserts = []
+                    for p in new_prods:
+                        if p["id"] not in existing_pid_set:
+                            inv_inserts.append({
+                                "product_id": p["id"],
+                                "current_stock": 0,
+                                "reorder_threshold": 10,
+                                "warehouse_id": "WH-01",
+                                "user_id": uid,
+                            })
+                    if inv_inserts:
+                        db.table("inventory").insert(inv_inserts).execute()
+                        print(f"[INFO] Auto-created {len(inv_inserts)} inventory records for new products")
+                except Exception as inv_err:
+                    print(f"[WARN] Auto-inventory creation failed: {inv_err}")
+            # ─────────────────────────────────────────────────────────────────
+
         except Exception as e:
             err_str = str(e)
             db_errors.append(err_str)
@@ -325,7 +354,56 @@ def confirm_upload(
         raise HTTPException(500, f"Database operation failed: {db_errors[0]}")
 
     del _preview_cache[upload_id]
-    return {"inserted": inserted, "updated": updated, "errors": errors, "db_errors": db_errors, "target_table": target}
+
+    # ── Build a rich summary for the post-upload analytics screen ────────────
+    summary_key = upload_id  # reuse same key so frontend can fetch it
+    summary: dict = {
+        "target_table": target,
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": len(errors),
+        "total_processed": inserted + updated + len(errors),
+        "categories": {},
+        "revenue_total": 0.0,
+        "top_items": [],
+    }
+
+    # Analyse inserted rows for category / revenue breakdown
+    for row in rows:
+        cat = row.get("category", "Unknown")
+        if cat and target == "products":
+            summary["categories"][cat] = summary["categories"].get(cat, 0) + 1
+        if target == "sales_history":
+            summary["revenue_total"] += float(row.get("revenue") or 0)
+
+    # Top items by revenue (sales_history) or by name (products)
+    if target == "sales_history":
+        sorted_rows = sorted(rows, key=lambda r: float(r.get("revenue") or 0), reverse=True)
+        summary["top_items"] = [
+            {"name": f"Product #{r.get('product_id','?')}", "value": float(r.get("revenue") or 0), "label": "revenue"}
+            for r in sorted_rows[:5]
+        ]
+    elif target == "products":
+        summary["top_items"] = [
+            {"name": r.get("name", "?"), "value": float(r.get("unit_price") or 0), "label": "unit price"}
+            for r in rows[:5]
+        ]
+    elif target == "inventory":
+        sorted_inv = sorted(rows, key=lambda r: int(r.get("current_stock") or 0), reverse=True)
+        summary["top_items"] = [
+            {"name": f"Product #{r.get('product_id','?')}", "value": int(r.get("current_stock") or 0), "label": "stock"}
+            for r in sorted_inv[:5]
+        ]
+    elif target == "suppliers":
+        summary["top_items"] = [
+            {"name": r.get("name", "?"), "value": float(r.get("reliability_score") or 0), "label": "reliability"}
+            for r in rows[:5]
+        ]
+
+    _summary_cache[summary_key] = summary
+    # ─────────────────────────────────────────────────────────────────────────
+
+    return {"inserted": inserted, "updated": updated, "errors": errors, "db_errors": db_errors, "target_table": target, "summary_id": upload_id}
 
 
 def _coerce_types(table: str, data: dict) -> dict:
@@ -341,3 +419,34 @@ def _coerce_types(table: str, data: dict) -> dict:
         elif k in int_fields:
             data[k] = int(float(str(v)))
     return data
+
+
+@router.get("/summary/{summary_id}")
+def get_upload_summary(
+    summary_id: str,
+    uid: int = Depends(get_user_id),
+):
+    """Return the post-confirm analysis summary. Cleared after first read."""
+    summary = _summary_cache.get(summary_id)
+    if not summary:
+        raise HTTPException(404, "Summary not found or already consumed")
+    # Clear after reading so it doesn't linger in memory
+    del _summary_cache[summary_id]
+    return summary
+
+
+@router.get("/table-stats")
+def get_table_stats(
+    db: Client = Depends(get_db),
+    uid: int = Depends(get_user_id),
+):
+    """Return row counts for all user-scoped tables so Dashboard can show live totals."""
+    tables = ["products", "inventory", "suppliers", "sales_history", "manufacturing_runs", "purchase_orders"]
+    stats = {}
+    for t in tables:
+        try:
+            res = db.table(t).select("id", count="exact").eq("user_id", uid).execute()
+            stats[t] = res.count if res.count is not None else len(res.data)
+        except Exception:
+            stats[t] = 0
+    return stats

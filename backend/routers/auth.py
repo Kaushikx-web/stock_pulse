@@ -82,6 +82,9 @@ def register(user: UserRegister, db: Client = Depends(get_db)):
 
         u = res.data[0]
 
+        # Ensure the new user's dashboard is clean (no orphaned data)
+        clear_user_data(db, u["id"])
+
         return {
             "id": u["id"],
             "username": u["username"],

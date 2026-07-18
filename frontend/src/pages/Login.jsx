@@ -170,11 +170,11 @@ export default function Login() {
         await registerUser({ username, email, password })
         const logRes = await loginUser({ username_or_email: username, password })
         login(logRes.data.user, logRes.data.token)
-        navigate('/')
+        navigate('/upload')
       } else {
         const logRes = await loginUser({ username_or_email: email, password })
         login(logRes.data.user, logRes.data.token)
-        navigate('/')
+        navigate('/upload')
       }
     } catch (err) {
       const detail = err.response?.data?.detail || ''

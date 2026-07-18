@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import Navbar from './components/Navbar'
 import Header from './components/Header'
@@ -11,6 +12,30 @@ import Inventory from './pages/Inventory'
 import ERPCore from './pages/ERPCore'
 import SettingsPage from './pages/Settings'
 import Login from './pages/Login'
+
+// Handles the "first open after login" redirect to Upload page.
+// Uses sessionStorage so the redirect only happens once per browser session
+// (cleared when the tab/browser is closed). After that, users can freely
+// navigate to Dashboard or any page without being forced back to upload.
+function SessionStartRedirect() {
+  const { isAuthenticated } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const alreadyStarted = sessionStorage.getItem('sp_session_started')
+    if (!alreadyStarted) {
+      sessionStorage.setItem('sp_session_started', '1')
+      // Only redirect if they landed on root (not a deep link)
+      if (location.pathname === '/') {
+        navigate('/upload', { replace: true })
+      }
+    }
+  }, [isAuthenticated]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return null
+}
 
 function AppContent() {
   const { isAuthenticated } = useAuth()
@@ -46,6 +71,9 @@ function AppContent() {
       {/* Ambient background glow orbs */}
       <div className="glow-orb-green" style={{ top: '10%', left: '15%' }} />
       <div className="glow-orb-blue" style={{ bottom: '15%', right: '10%' }} />
+
+      {/* Redirect to /upload at the start of every new browser session */}
+      <SessionStartRedirect />
       
       <Navbar />
       
@@ -67,7 +95,7 @@ function AppContent() {
             <Route path="/priority"  element={<ManufacturingPriority />} />
             <Route path="/analytics" element={<ProductAnalytics />} />
             <Route path="/settings"  element={<SettingsPage />} />
-            <Route path="*"          element={<Navigate to="/" replace />} />
+            <Route path="*"          element={<Navigate to="/upload" replace />} />
           </Routes>
         </main>
       </div>

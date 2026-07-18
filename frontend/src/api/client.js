@@ -51,3 +51,5 @@ export const getPnL = () => api.get('/analytics/pnl')
 export const uploadFile = (formData) =>
   api.post('/upload/', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
 export const confirmUpload = (uploadId) => api.post(`/upload/confirm/${uploadId}`)
+export const getUploadSummary = (summaryId) => api.get(`/upload/summary/${summaryId}`)
+export const getTableStats = () => api.get('/upload/table-stats')
