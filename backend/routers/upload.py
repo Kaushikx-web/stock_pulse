@@ -311,7 +311,15 @@ def confirm_upload(
                     updated += 1
 
         except Exception as e:
-            db_errors.append(str(e))
+            err_str = str(e)
+            db_errors.append(err_str)
+            # Provide helpful message for missing user_id column
+            if "user_id" in err_str.lower() or "column" in err_str.lower():
+                db_errors.append(
+                    "HINT: The database tables are missing the 'user_id' column. "
+                    "Please run migration 002_add_user_id.sql in Supabase SQL Editor."
+                )
+            print(f"[ERROR] DB insert failed for table '{target}': {err_str}")
 
     if db_errors and inserted == 0 and updated == 0:
         raise HTTPException(500, f"Database operation failed: {db_errors[0]}")

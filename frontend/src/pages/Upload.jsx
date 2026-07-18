@@ -44,7 +44,7 @@ export default function UploadPage() {
     } finally {
       setUploading(false)
     }
-  }, [])
+  }, [targetTable])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,

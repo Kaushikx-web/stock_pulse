@@ -82,9 +82,6 @@ def register(user: UserRegister, db: Client = Depends(get_db)):
 
         u = res.data[0]
 
-        # Make sure user-scoped data is zero in dashboard section
-        clear_user_data(db, u["id"])
-
         return {
             "id": u["id"],
             "username": u["username"],
@@ -116,9 +113,6 @@ def login(credentials: UserLogin, db: Client = Depends(get_db)):
         user = res.data[0]
         if user["password_hash"] != hash_password(credentials.password):
             raise HTTPException(400, "Invalid username/email or password.")
-
-        # Make sure user-scoped data is zero in dashboard section upon login
-        clear_user_data(db, user["id"])
 
         return {
             "user": {
